@@ -113,6 +113,10 @@ stdenvNoCC.mkDerivation (
       }}
 
       gappsWrapperArgsHook
+
+      # Experimental: force ANGLE onto its Vulkan backend (RADV) instead of
+      # Mesa GL (radeonsi), to test whether that avoids the amdgpu gfxhub
+      # page fault + GPU mode1 reset this process triggers.
       makeWrapper "$appDir/DeepSeek Harness" "$out/bin/dsh-desktop" \
         "''${gappsWrapperArgs[@]}" \
         --prefix LD_LIBRARY_PATH : ${
@@ -123,6 +127,7 @@ stdenvNoCC.mkDerivation (
         } \
         ${runtimePathArgs}\
         --set CHROME_DEVEL_SANDBOX "${electron.unwrapped}/libexec/electron/chrome-sandbox" \
+        --add-flags "--use-angle=vulkan" \
         --inherit-argv0
 
       for size in 16 22 24 32 48 64 128 256 512; do
