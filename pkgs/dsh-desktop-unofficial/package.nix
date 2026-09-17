@@ -57,6 +57,10 @@ let
     fi
     exec ${systemd}/bin/systemd-run "$@"
   '';
+
+  # Hosts the Agents Anywhere Connector's `uv` invocation on NixOS without
+  # requiring host-level nix-ld; see agents-anywhere-uv.nix.
+  agentsAnywhereUv = callPackage ./agents-anywhere-uv.nix { };
 in
 stdenvNoCC.mkDerivation (
   finalAttrs:
@@ -127,6 +131,7 @@ stdenvNoCC.mkDerivation (
         } \
         ${runtimePathArgs}\
         --set CHROME_DEVEL_SANDBOX "${electron.unwrapped}/libexec/electron/chrome-sandbox" \
+        --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --add-flags "--use-angle=vulkan" \
         --inherit-argv0
 
@@ -151,6 +156,7 @@ stdenvNoCC.mkDerivation (
 
       makeWrapper "$appBundle/Contents/MacOS/DeepSeek Harness" "$out/bin/dsh-desktop" \
         ${runtimePathArgs}\
+        --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --inherit-argv0
     ''
     + ''
@@ -171,6 +177,7 @@ stdenvNoCC.mkDerivation (
 
     passthru = {
       variant = "unofficial";
+      inherit agentsAnywhereUv;
       shell = callPackage ./shell.nix { };
       runtime = callPackage ./runtime.nix { inherit dshHost; };
       runtimeDeps = lib.optional useSystemdShim systemdRunShim ++ dshHost.passthru.runtimeDeps;
