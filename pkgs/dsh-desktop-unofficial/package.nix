@@ -61,6 +61,10 @@ let
   # Hosts the Agents Anywhere Connector's `uv` invocation on NixOS without
   # requiring host-level nix-ld; see agents-anywhere-uv.nix.
   agentsAnywhereUv = callPackage ./agents-anywhere-uv.nix { };
+
+  # Electron-safe `sharp`; see that file for why the packaged one crashes the
+  # Host under Electron on Linux.
+  sharpElectronSafe = callPackage ../sharp-electron-safe.nix { };
 in
 stdenvNoCC.mkDerivation (
   finalAttrs:
@@ -115,6 +119,31 @@ stdenvNoCC.mkDerivation (
         src = finalAttrs.passthru.runtime;
         dest = "$appDir/resources/host";
       }}
+
+      # Replace every `sharp` in the assembled trees with the electron-safe build.
+      #
+      # The Host resolves `sharp` from the *app* tree, not from `resources/host`:
+      # its entry script is
+      # `resources/app/node_modules/dsh-plugin-desktop/lib/host-process-entry.js`,
+      # so a bare `import "sharp"` from the bundled
+      # `dsh-plugin-desktop/node_modules/@deepseek-ai/dsh-attachment-local` walks up
+      # to `dsh-plugin-desktop/node_modules/sharp`. Verified against a running
+      # instance, whose Host had mapped exactly that copy's
+      # `@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3` -- which is why
+      # fixing only the vendored `resources/host` tree left the crash in place.
+      #
+      # `dsh-community-market` carries a second nested copy, so match on
+      # `*/node_modules/sharp`; that covers both without descending into the
+      # replacement, whose bundled tree lives at `sharp/linux-x64/sharp`.
+      # Collect the list first: the loop rewrites the tree `find` is walking.
+      sharpDirs=$(find "$appDir" -type d -path '*/node_modules/sharp')
+      while IFS= read -r sharpDir; do
+        [ -n "$sharpDir" ] || continue
+        echo "dsh-desktop: replacing $sharpDir with the electron-safe sharp"
+        rm -rf "$sharpDir"
+        cp -r ${sharpElectronSafe}/package "$sharpDir"
+        chmod -R u+w "$sharpDir"
+      done <<< "$sharpDirs"
 
       gappsWrapperArgsHook
 
