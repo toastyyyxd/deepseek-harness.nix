@@ -3,6 +3,7 @@
   bashInteractive,
   buildNpmPackage,
   fetchFromGitHub,
+  fetchurl,
   fontconfig,
   importPnpmLock,
   jq,
@@ -25,6 +26,27 @@ let
   platformKey = with stdenv.hostPlatform.node; "${platform}-${arch}";
   dshSystemIsAvailable = lib.meta.availableOn stdenv.hostPlatform dsh-system;
   inherit (stdenv.hostPlatform) isLinux isDarwin;
+
+  # `sharp`/`libvips` bundle a private `glib` inside `libvips-cpp.so` but do not
+  # hide its symbols. Electron's Linux binary dynamically links the system `glib`
+  # for GTK integration, so the two copies collide inside one process and the
+  # desktop host dies with SIGSEGV (exit 139) the first time an image is decoded:
+  # `read_image`, or attaching an image. No configuration flag avoids it; it is
+  # electron/electron#46323, unresolved upstream.
+  #
+  # `@janhapke/sharp-electron` is the same sharp release rebuilt with the
+  # collision fixed at the linker level -- `libvips-cpp.so` sits beside the addon
+  # and the addon's RUNPATH is `$ORIGIN`. It is a drop-in package, so it can
+  # substitute for `sharp` without touching DSH code. Verified to decode under
+  # this desktop's Electron runtime where stock sharp 0.35.3 segfaults.
+  #
+  # Its shim keeps a `sharp-upstream` fallback for non-Linux platforms. Those
+  # never reach it (the shim's non-Linux branch is not taken here, and this
+  # override is Linux-only), so it stays in the tarball unvendored and unused.
+  sharpElectronSafeSrc = fetchurl {
+    url = "https://registry.npmjs.org/@janhapke/sharp-electron/-/sharp-electron-0.35.4-electron.1.tgz";
+    hash = "sha256-r5Z8zJ4wbjapLNAXvGEhqwZSHI/E07xkLT6Q9i4+RMY=";
+  };
 in
 buildNpmPackage (finalAttrs: {
   pname = "dsh-workspace";
@@ -99,6 +121,18 @@ buildNpmPackage (finalAttrs: {
     patchDshWorkspace kernel
   ''
   + lib.optionalString isLinux ''
+    # The offline dependency store is populated from a rewritten lockfile that
+    # already points at these patched tarballs, but this build tree carries the
+    # upstream lockfile -- so without the same rewrite here pnpm resolves the
+    # registry URL, misses the (absent) stock tarball in the store and fails with
+    # ERR_PNPM_NO_OFFLINE_TARBALL. Keep both in step with `packageSourceOverrides`.
+    yq -i '
+      .packages."sharp@0.35.3".resolution = load("${
+        writers.writeJSON "sharp-resolution.json"
+          finalAttrs.pnpmDeps.passthru.rewrittenLockfileData.packages."sharp@0.35.3".resolution
+      }")
+    ' pnpm-lock.yaml
+
     # Match the patched tarball used to populate the offline dependency store.
     yq -i '
       .packages."@deepseek-ai/libreoffice-kit@0.1.5".resolution = load("${
@@ -127,6 +161,56 @@ buildNpmPackage (finalAttrs: {
             patch -d package -p1 < ${./libreoffice-kit-fontconfig.patch}
             substituteInPlace package/lib/index.js package/lib/cli.js \
               --replace-fail '@fc-list@' '${lib.getExe' fontconfig "fc-list"}'
+            tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
+              -czf "$out" package
+          '';
+
+      # Rewrite the published manifest to claim the identity the lockfile expects.
+      # pnpm's prepopulated store is keyed by `name@version` and refuses a
+      # mismatch ("Package name or version mismatch found while reading from the
+      # store"), so the electron-safe build is relabelled to plain `sharp@0.35.3`.
+      #
+      # Its shim exists to serve non-Linux platforms from an aliased
+      # `sharp-upstream` dependency, and its bundled types re-export that alias.
+      # That dependency is not vendored here, so both are pointed at the bundled
+      # linux-x64 tree instead, which ships its own `dist/` and type declarations
+      # and leaves the tarball self-contained. (Consumer code does
+      # `import type { Sharp } from 'sharp'` and is compiled by the workspace
+      # build, so the type entry point has to resolve.)
+      #
+      # NOTE: upstream has no `linux-arm64` build and throws for that arch, so an
+      # aarch64-linux desktop would need its own rebuild.
+      "sharp@0.35.3" =
+        { ... }:
+        runCommand "sharp-0.35.3-electron.tgz"
+          {
+            src = sharpElectronSafeSrc;
+            nativeBuildInputs = [
+              jq
+              bashInteractive
+            ];
+          }
+          ''
+            tar -xzf "$src"
+
+            jq '.name = "sharp"
+              | .version = "0.35.3"
+              | del(.dependencies."sharp-upstream")' \
+              package/package.json > package/package.json.tmp
+            mv package/package.json.tmp package/package.json
+
+            # Runtime: always the bundled build, so the shim needs no fallback.
+            cat > package/index.js <<'EOF'
+            module.exports = require('./linux-x64/sharp/dist/index.cjs');
+            EOF
+
+            # Types: same target, keeping the shim's `export =` shape so the
+            # entry point works with or without esModuleInterop.
+            cat > package/index.d.ts <<'EOF'
+            import sharp = require('./linux-x64/sharp/dist/index.cjs');
+            export = sharp;
+            EOF
+
             tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
               -czf "$out" package
           '';
