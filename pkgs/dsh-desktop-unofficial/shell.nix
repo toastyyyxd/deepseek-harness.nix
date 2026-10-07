@@ -74,6 +74,23 @@ stdenv.mkDerivation (finalAttrs: {
     ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
     YARN_ENABLE_SCRIPTS = "0";
     CI = "true";
+
+    # The upstream desktop lockfile is Yarn format v10, which only the Yarn that
+    # ships with a recent nixpkgs accepts. Consumers whose nixpkgs is older get
+    # an older Yarn (4.14 expects v9), and because `CI` is set the config hook's
+    # `yarn install` runs immutable, so the version migration aborts the build:
+    #
+    #   YN0028: -  version: 10
+    #           +  version: 9
+    #   YN0028: The lockfile would have been modified by this install, which is
+    #           explicitly forbidden.
+    #
+    # Allow that migration. It only rewrites the lockfile's format version --
+    # the resolved entries are identical, so the prebuilt offline cache still
+    # satisfies the install -- and the hook's src/cache lockfile diff still
+    # catches genuinely stale dependencies. Newer Yarn needs no migration, so
+    # this is a no-op there rather than a downgrade.
+    YARN_ENABLE_IMMUTABLE_INSTALLS = "0";
   };
 
   buildPhase = ''
