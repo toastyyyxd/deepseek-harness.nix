@@ -96,6 +96,34 @@ stdenv.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
 
+    # Give the Host `--expose-internals`.
+    #
+    # The Host runs as an Electron utility process, and Node internals are the only
+    # way to reach the ESM loader. The bundled `node-addon-require-builtin` refuses
+    # this Electron build: its fingerprint check allows Electron 43.0.0, 44.0.0 and
+    # 45.0.0-alpha.6, while this is 43.6.0 --
+    #
+    #   node-addon-require-builtin unsupported: Unsupported/no-context (unsupported
+    #   Electron runtime fingerprint: Node 24.20.0, V8 15.0.245.31-electron.0
+    #   (supported Electron versions: 43.0.0, 44.0.0, 45.0.0-alpha.6))
+    #
+    # so internals have to come from `--expose-internals`, which is exactly what the
+    # `expose-internals-loader.patch` carried by this fork already assumes. The
+    # desktop forks the Host with no `execArgv` at all, so the flag never arrives
+    # and `ModuleLoader.fromInternal()` returns undefined. Harness 0.2.1 added
+    # `resolvePluginResource`, which throws on that -- surfacing as, for every plugin
+    # whose metadata resolves resources,
+    #
+    #   Error: Plugin metadata requires the Node module resolver
+    #
+    # (absent in 0.1.6, which is why bumping the bundled harness exposed it).
+    # `utilityProcess.fork` forwards `execArgv` to the child, so setting it here is
+    # enough; verified to make `fromInternal()` return the v2 loader.
+    substituteInPlace dsh-plugin-desktop/src/host-process.ts \
+      --replace-fail \
+        "serviceName: 'DSH Host', stdio: 'pipe', cwd: process.cwd(), env: { ...process.env }," \
+        "serviceName: 'DSH Host', stdio: 'pipe', cwd: process.cwd(), env: { ...process.env }, execArgv: ['--expose-internals'],"
+
     # The root build resolves dshmarket@latest from npm, outside the lockfile.
     yarn workspace dsh-community-market build
     yarn workspace dsh-plugin-desktop build
