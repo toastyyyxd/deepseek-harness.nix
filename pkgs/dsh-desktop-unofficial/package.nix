@@ -29,6 +29,11 @@
   dshHost ? dsh,
   # systemd package providing systemd-run for the Linux containment shim.
   systemd ? null,
+  # BrowserSkill CLI (`bsk`), from `pkgs.dsh.bsk`. When set, it is put on the
+  # wrapper PATH so the BrowserSkill dsh plugin finds it without extra
+  # configuration, and its self-update check is disabled because the store path
+  # is immutable.
+  browserSkill ? null,
 }:
 
 let
@@ -72,6 +77,13 @@ stdenvNoCC.mkDerivation (
     runtimePathArgs = lib.optionalString (
       finalAttrs.passthru.runtimeDeps != [ ]
     ) "--prefix PATH : ${lib.makeBinPath finalAttrs.passthru.runtimeDeps} ";
+
+    # The store path cannot be written next to, so bsk's self-update could only
+    # ever report "cannot install it next to its executable"; drive updates
+    # through this flake instead.
+    browserSkillArgs = lib.optionalString (
+      finalAttrs.passthru.browserSkill != null
+    ) "--set BSK_AUTO_UPDATE off ";
   in
   {
     pname = "dsh-desktop";
@@ -159,6 +171,7 @@ stdenvNoCC.mkDerivation (
           ]
         } \
         ${runtimePathArgs}\
+        ${browserSkillArgs}\
         --set CHROME_DEVEL_SANDBOX "${electron.unwrapped}/libexec/electron/chrome-sandbox" \
         --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --add-flags "--use-angle=vulkan" \
@@ -185,6 +198,7 @@ stdenvNoCC.mkDerivation (
 
       makeWrapper "$appBundle/Contents/MacOS/DeepSeek Harness" "$out/bin/dsh-desktop" \
         ${runtimePathArgs}\
+        ${browserSkillArgs}\
         --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --inherit-argv0
     ''
@@ -206,10 +220,13 @@ stdenvNoCC.mkDerivation (
 
     passthru = {
       variant = "unofficial";
-      inherit agentsAnywhereUv;
+      inherit agentsAnywhereUv browserSkill;
       shell = callPackage ./shell.nix { };
       runtime = callPackage ./runtime.nix { inherit dshHost; };
-      runtimeDeps = lib.optional useSystemdShim systemdRunShim ++ dshHost.passthru.runtimeDeps;
+      runtimeDeps =
+        lib.optional useSystemdShim systemdRunShim
+        ++ dshHost.passthru.runtimeDeps
+        ++ lib.optional (browserSkill != null) browserSkill;
 
       updateScript = writeShellScript "dsh-desktop-update" ''
         PATH=${

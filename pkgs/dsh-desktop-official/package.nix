@@ -33,12 +33,23 @@
   dshHost ? dsh,
   desktopProfile ? null,
   dshDesktopPnpm ? pnpmWorkspaceDeploy,
+  # BrowserSkill CLI (`bsk`), from `pkgs.dsh.bsk`. When set, it is put on the
+  # wrapper PATH so the BrowserSkill dsh plugin finds it without extra
+  # configuration, and its self-update check is disabled because the store path
+  # is immutable.
+  browserSkill ? null,
 }:
 
 let
   inherit (stdenvNoCC.hostPlatform) isDarwin isLinux;
 
   desktopId = "deepseek-ai-dsh-desktop";
+
+  # The store path cannot be written next to, so bsk's self-update could only
+  # ever report "cannot install it next to its executable"; drive updates
+  # through this flake instead.
+  browserSkillArgs = lib.optionalString (browserSkill != null) "--set BSK_AUTO_UPDATE off ";
+
   appDir = if isDarwin then "$out/Applications/DeepSeek Harness.app" else "$out/lib/dsh-desktop";
   appExecutable =
     if isDarwin then "${appDir}/Contents/MacOS/DeepSeek Harness" else "${appDir}/DeepSeek Harness";
@@ -243,6 +254,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       --set DSH_BUNDLED_PRIMARY_RUNTIME "$primaryRuntime" \
       --prefix PATH : "${runtimeRoot}/runtime/bin" \
       --prefix PATH : ${lib.makeBinPath finalAttrs.passthru.desktopRuntimeDeps} \
+      ${browserSkillArgs}\
       --inherit-argv0
   ''
   + lib.optionalString isLinux ''
@@ -291,10 +303,11 @@ stdenvNoCC.mkDerivation (finalAttrs: {
           stdenv.cc.cc.lib
         ]
       }
-     --set CHROME_DEVEL_SANDBOX "${appDir}/chrome-sandbox"
+      --set CHROME_DEVEL_SANDBOX "${appDir}/chrome-sandbox"
       --set DSH_BUNDLED_PRIMARY_RUNTIME "${runtimeRoot}/runtime/primary-runtime"
       --prefix PATH : "${runtimeRoot}/runtime/bin"
       --prefix PATH : ${lib.makeBinPath finalAttrs.passthru.desktopRuntimeDeps}
+      ${browserSkillArgs}\
       --inherit-argv0
     )
   '';
@@ -325,7 +338,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     desktopRuntimeDeps = [
       finalAttrs.passthru.pythonEnv
     ]
-    ++ lib.remove dshDesktopPnpm dshHost.passthru.runtimeDeps;
+    ++ lib.remove dshDesktopPnpm dshHost.passthru.runtimeDeps
+    ++ lib.optional (browserSkill != null) browserSkill;
+    inherit browserSkill;
     sharpLibvips =
       runCommand "dsh-desktop-sharp-libvips-${dshHost.version}"
         {
