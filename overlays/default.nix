@@ -105,6 +105,12 @@ let
         fetchPnpmDeps
         nodeModulesPrune
         ;
+      # `pkgs/bsk` fetches an upstream release tarball rather than building a
+      # workspace package, so it needs a nixpkgs fetcher that the dsh scope
+      # does not otherwise expose to its own callPackage scope.
+      inherit (final) fetchzip;
+      # Client peers of external bundles come from the upstream release pack,
+      # not from the workspace deploy tree.
       dshCohort = self.callPackage ../lib/dsh-cohort.nix { };
       inherit pnpmWorkspaceDeploy;
       inherit removedBundles;
