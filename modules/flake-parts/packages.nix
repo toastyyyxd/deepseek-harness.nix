@@ -16,6 +16,11 @@
           dsh-kernel
           dsh-workspace
           ;
+        # BrowserSkill CLI. Pass it to a desktop package's `browserSkill`
+        # argument to put it on the app's wrapper PATH, e.g.
+        # `dsh-desktop.override { browserSkill = dsh.bsk; }`.
+        # `callPackage`d derivations are overridable, so `bsk.override` works too.
+        inherit (dsh) bsk;
         inherit docs-site;
       };
 
