@@ -38,7 +38,7 @@ let
   # collision fixed at the linker level -- `libvips-cpp.so` sits beside the addon
   # and the addon's RUNPATH is `$ORIGIN`. It is a drop-in package, so it can
   # substitute for `sharp` without touching DSH code. Verified to decode under
-  # this desktop's Electron runtime where stock sharp 0.35.3 segfaults.
+  # this desktop's Electron runtime where stock sharp 0.35.5 segfaults.
   #
   # Its shim keeps a `sharp-upstream` fallback for non-Linux platforms. Those
   # never reach it (the shim's non-Linux branch is not taken here, and this
@@ -124,9 +124,9 @@ buildNpmPackage (finalAttrs: {
     # registry URL, misses the (absent) stock tarball in the store and fails with
     # ERR_PNPM_NO_OFFLINE_TARBALL. Keep both in step with `packageSourceOverrides`.
     yq -i '
-      .packages."sharp@0.35.3".resolution = load("${
+      .packages."sharp@0.35.5".resolution = load("${
         writers.writeJSON "sharp-resolution.json"
-          finalAttrs.pnpmDeps.passthru.rewrittenLockfileData.packages."sharp@0.35.3".resolution
+          finalAttrs.pnpmDeps.passthru.rewrittenLockfileData.packages."sharp@0.35.5".resolution
       }")
     ' pnpm-lock.yaml
 
@@ -165,7 +165,7 @@ buildNpmPackage (finalAttrs: {
       # Rewrite the published manifest to claim the identity the lockfile expects.
       # pnpm's prepopulated store is keyed by `name@version` and refuses a
       # mismatch ("Package name or version mismatch found while reading from the
-      # store"), so the electron-safe build is relabelled to plain `sharp@0.35.3`.
+      # store"), so the electron-safe build is relabelled to plain `sharp@0.35.5`.
       #
       # Its shim exists to serve non-Linux platforms from an aliased
       # `sharp-upstream` dependency, and its bundled types re-export that alias.
@@ -177,9 +177,9 @@ buildNpmPackage (finalAttrs: {
       #
       # NOTE: upstream has no `linux-arm64` build and throws for that arch, so an
       # aarch64-linux desktop would need its own rebuild.
-      "sharp@0.35.3" =
+      "sharp@0.35.5" =
         { ... }:
-        runCommand "sharp-0.35.3-electron.tgz"
+        runCommand "sharp-0.35.5-electron.tgz"
           {
             src = sharpElectronSafeSrc;
             nativeBuildInputs = [
@@ -191,7 +191,7 @@ buildNpmPackage (finalAttrs: {
             tar -xzf "$src"
 
             jq '.name = "sharp"
-              | .version = "0.35.3"
+              | .version = "0.35.5"
               | del(.dependencies."sharp-upstream")' \
               package/package.json > package/package.json.tmp
             mv package/package.json.tmp package/package.json
