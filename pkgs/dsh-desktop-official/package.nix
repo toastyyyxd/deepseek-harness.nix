@@ -4,6 +4,9 @@
   stdenv,
   stdenvNoCC,
 
+  # `readelf` (binutils) drives the postFixup RPATH pass (`patchelf` is
+  # already an argument for the sharp libvips fixup below).
+  binutils,
   copyDesktopItems,
   copyTree,
   darwin,
@@ -87,6 +90,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   ++ lib.optionals isLinux [
     copyDesktopItems
     wrapGAppsHook3
+    # Used by the postFixup RPATH pass below.
+    binutils
+    patchelf
   ];
 
   buildInputs = lib.optionals isLinux [
@@ -297,10 +303,17 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   + lib.optionalString isLinux ''
     gappsWrapperArgs+=(
       --prefix LD_LIBRARY_PATH : "${finalAttrs.passthru.sharpLibvips}/lib"
+      # libGL stays exported, but not the gcc-15.3.0 libstdc++ that used to
+      # travel with it: the wrapper's environment is inherited by every child
+      # process, and LD_LIBRARY_PATH is searched before a child's own RUNPATH,
+      # so that libstdc++ (GLIBCXX_3.4.34) shadowed the newer one a child
+      # resolves through its RUNPATH -- Hyprland 0.56.2's `hyprctl` failed
+      # with "version `GLIBCXX_3.4.35' not found" in every shell DSH spawned.
+      # The native modules that link libstdc++ carry it as an RPATH instead
+      # (postFixup below), so nothing needs it exported.
       --suffix LD_LIBRARY_PATH : ${
         lib.makeLibraryPath [
           libGL
-          stdenv.cc.cc.lib
         ]
       }
       --set CHROME_DEVEL_SANDBOX "${appDir}/chrome-sandbox"
@@ -310,6 +323,45 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       ${browserSkillArgs}\
       --inherit-argv0
     )
+  '';
+
+  # The renderer tree and the DSH runtime ship prebuilt native modules
+  # (`node-pty`, `koffi`, `sharp`/libvips, sherpa-onnx, onnxruntime, ...) that
+  # link libstdc++ but carry no RPATH for it. The wrapper used to cover that by
+  # exporting `${stdenv.cc.cc.lib}/lib` on LD_LIBRARY_PATH; that export is what
+  # broke `hyprctl` in every shell DSH spawned (see gappsWrapperArgs above), so
+  # the modules get the path themselves instead. This is what makes dropping
+  # the export safe.
+  #
+  # Walking the assembled tree rather than a fixed file list means prebuilt
+  # addons shipped by a future shell or runtime release are covered too. The
+  # magic check skips non-ELF files, `--add-rpath` appends (so an RPATH an
+  # addon already ships keeps its precedence), and the membership test keeps a
+  # repeated fixup idempotent.
+  postFixup = lib.optionalString isLinux ''
+    libstdcxxDir="${stdenv.cc.cc.lib}/lib"
+    rpathPatched=0
+
+    while IFS= read -r -d "" f; do
+      # ELF magic: 7f 45 4c 46.
+      case "$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')" in
+        7f454c46) ;;
+        *) continue ;;
+      esac
+
+      readelf -d "$f" 2>/dev/null | grep -q 'libstdc++' || continue
+
+      currentRpath="$(patchelf --print-rpath "$f" 2>/dev/null || true)"
+      case ":$currentRpath:" in
+        *":$libstdcxxDir:"*) continue ;;
+      esac
+
+      chmod u+w "$f"
+      patchelf --add-rpath "$libstdcxxDir" "$f"
+      rpathPatched=$((rpathPatched + 1))
+    done < <(find "${appDir}" -type f -print0)
+
+    echo "dsh-desktop: added $libstdcxxDir to the RPATH of $rpathPatched native modules"
   '';
 
   doInstallCheck = true;
