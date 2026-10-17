@@ -6,9 +6,6 @@
   darwin,
   electron,
   makeWrapper,
-  # `readelf` (binutils) and `patchelf` drive the postFixup RPATH pass.
-  binutils,
-  patchelf,
   wrapGAppsHook3,
   writeShellScriptBin,
   gsettings-desktop-schemas,
@@ -108,9 +105,6 @@ stdenvNoCC.mkDerivation (
       wrapGAppsHook3
       copyDesktopItems
       imagemagick
-      # Used by the postFixup RPATH pass below.
-      binutils
-      patchelf
     ];
 
     buildInputs = lib.optionals isLinux [
@@ -168,22 +162,12 @@ stdenvNoCC.mkDerivation (
       # Experimental: force ANGLE onto its Vulkan backend (RADV) instead of
       # Mesa GL (radeonsi), to test whether that avoids the amdgpu gfxhub
       # page fault + GPU mode1 reset this process triggers.
-      #
-      # libGL is still exported, but the gcc-15.3.0 libstdc++ that used to
-      # travel with it is not: the wrapper's environment is inherited by every
-      # child process, and LD_LIBRARY_PATH is searched before a child's own
-      # RUNPATH, so that libstdc++ (GLIBCXX_3.4.34) shadowed the newer one a
-      # child resolves through its RUNPATH -- Hyprland 0.56.2's `hyprctl`
-      # failed with "version `GLIBCXX_3.4.35' not found" in every shell DSH
-      # spawned. The native modules that link libstdc++ now carry it as an
-      # RPATH instead (postFixup below), so nothing needs it exported.
-      # Suffixing keeps any LD_LIBRARY_PATH the session already exported ahead
-      # of the app's own entry.
       makeWrapper "$appDir/DeepSeek Harness" "$out/bin/dsh-desktop" \
         "''${gappsWrapperArgs[@]}" \
-        --suffix LD_LIBRARY_PATH : ${
+        --prefix LD_LIBRARY_PATH : ${
           lib.makeLibraryPath [
             libGL
+            stdenv.cc.cc.lib
           ]
         } \
         ${runtimePathArgs}\
@@ -220,45 +204,6 @@ stdenvNoCC.mkDerivation (
     ''
     + ''
       runHook postInstall
-    '';
-
-    # The shell and the DSH runtime ship prebuilt native modules (`node-pty`,
-    # `koffi`, `sharp`/libvips, sherpa-onnx, onnxruntime, ...) that link
-    # libstdc++ but carry no RPATH for it. The wrapper used to cover that by
-    # exporting `${stdenv.cc.cc.lib}/lib` on LD_LIBRARY_PATH; that export is
-    # what broke `hyprctl` in every shell DSH spawned (see the makeWrapper
-    # comment in installPhase), so the modules get the path themselves
-    # instead. This is what makes dropping the export safe.
-    #
-    # Walking the assembled tree rather than a fixed file list means prebuilt
-    # addons shipped by a future shell or runtime release are covered too. The
-    # magic check skips non-ELF files, `--add-rpath` appends (so an RPATH an
-    # addon already ships keeps its precedence), and the membership test keeps
-    # a repeated fixup idempotent.
-    postFixup = lib.optionalString isLinux ''
-      libstdcxxDir="${stdenv.cc.cc.lib}/lib"
-      rpathPatched=0
-
-      while IFS= read -r -d "" f; do
-        # ELF magic: 7f 45 4c 46.
-        case "$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')" in
-          7f454c46) ;;
-          *) continue ;;
-        esac
-
-        readelf -d "$f" 2>/dev/null | grep -q 'libstdc++' || continue
-
-        currentRpath="$(patchelf --print-rpath "$f" 2>/dev/null || true)"
-        case ":$currentRpath:" in
-          *":$libstdcxxDir:"*) continue ;;
-        esac
-
-        chmod u+w "$f"
-        patchelf --add-rpath "$libstdcxxDir" "$f"
-        rpathPatched=$((rpathPatched + 1))
-      done < <(find "$out/lib/dsh-desktop" -type f -print0)
-
-      echo "dsh-desktop: added $libstdcxxDir to the RPATH of $rpathPatched native modules"
     '';
 
     desktopItems = lib.optionals isLinux [
