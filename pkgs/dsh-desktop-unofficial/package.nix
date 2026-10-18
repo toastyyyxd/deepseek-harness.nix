@@ -29,26 +29,15 @@
   dshHost ? dsh,
   # systemd package providing systemd-run for the Linux containment shim.
   systemd ? null,
-  # BrowserSkill CLI (`bsk`), from `pkgs.dsh.bsk`. When set, it is put on the
-  # wrapper PATH so the BrowserSkill dsh plugin finds it without extra
-  # configuration, and its self-update check is disabled because the store path
-  # is immutable.
-  browserSkill ? null,
 }:
 
 let
   inherit (stdenvNoCC.hostPlatform) isLinux isDarwin;
 
-  # DSH's Linux Electron runner is spawned through `systemd-run`, but upstream
-  # only sets ELECTRON_RUN_AS_NODE=1 on Windows, so the scope starts the
-  # Electron binary in GUI mode instead of Node mode. Shadow systemd-run in the
-  # wrapper PATH with this shim: the private runner launched by
-  # `runnerEnvironment()` (marked by DSH_SUBPROCESS_RUNNER and the runner entry)
-  # gets ELECTRON_RUN_AS_NODE=1; every other systemd-run invocation is
-  # untouched.
+  # Upstream leaves Linux subprocess runners in Electron GUI mode.
+  # Set Node mode only for the private runner, preserving other systemd-run calls.
   useSystemdShim = isLinux && systemd != null;
   systemdRunShim = writeShellScriptBin "systemd-run" ''
-    # Every private runner launch needs Electron's Node mode.
     runner=0
     if [ -n "''${DSH_SUBPROCESS_RUNNER-}" ]; then
       case " $* " in
@@ -62,14 +51,6 @@ let
     fi
     exec ${systemd}/bin/systemd-run "$@"
   '';
-
-  # Hosts the Agents Anywhere Connector's `uv` invocation on NixOS without
-  # requiring host-level nix-ld; see agents-anywhere-uv.nix.
-  agentsAnywhereUv = callPackage ./agents-anywhere-uv.nix { };
-
-  # Electron-safe `sharp`; see that file for why the packaged one crashes the
-  # Host under Electron on Linux.
-  sharpElectronSafe = callPackage ../sharp-electron-safe.nix { };
 in
 stdenvNoCC.mkDerivation (
   finalAttrs:
@@ -77,13 +58,6 @@ stdenvNoCC.mkDerivation (
     runtimePathArgs = lib.optionalString (
       finalAttrs.passthru.runtimeDeps != [ ]
     ) "--prefix PATH : ${lib.makeBinPath finalAttrs.passthru.runtimeDeps} ";
-
-    # The store path cannot be written next to, so bsk's self-update could only
-    # ever report "cannot install it next to its executable"; drive updates
-    # through this flake instead.
-    browserSkillArgs = lib.optionalString (
-      finalAttrs.passthru.browserSkill != null
-    ) "--set BSK_AUTO_UPDATE off ";
   in
   {
     pname = "dsh-desktop";
@@ -132,36 +106,7 @@ stdenvNoCC.mkDerivation (
         dest = "$appDir/resources/host";
       }}
 
-      # Replace every `sharp` in the assembled trees with the electron-safe build.
-      #
-      # The Host resolves `sharp` from the *app* tree, not from `resources/host`:
-      # its entry script is
-      # `resources/app/node_modules/dsh-plugin-desktop/lib/host-process-entry.js`,
-      # so a bare `import "sharp"` from the bundled
-      # `dsh-plugin-desktop/node_modules/@deepseek-ai/dsh-attachment-local` walks up
-      # to `dsh-plugin-desktop/node_modules/sharp`. Verified against a running
-      # instance, whose Host had mapped exactly that copy's
-      # `@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.3` -- which is why
-      # fixing only the vendored `resources/host` tree left the crash in place.
-      #
-      # `dsh-community-market` carries a second nested copy, so match on
-      # `*/node_modules/sharp`; that covers both without descending into the
-      # replacement, whose bundled tree lives at `sharp/linux-x64/sharp`.
-      # Collect the list first: the loop rewrites the tree `find` is walking.
-      sharpDirs=$(find "$appDir" -type d -path '*/node_modules/sharp')
-      while IFS= read -r sharpDir; do
-        [ -n "$sharpDir" ] || continue
-        echo "dsh-desktop: replacing $sharpDir with the electron-safe sharp"
-        rm -rf "$sharpDir"
-        cp -r ${sharpElectronSafe}/package "$sharpDir"
-        chmod -R u+w "$sharpDir"
-      done <<< "$sharpDirs"
-
       gappsWrapperArgsHook
-
-      # Experimental: force ANGLE onto its Vulkan backend (RADV) instead of
-      # Mesa GL (radeonsi), to test whether that avoids the amdgpu gfxhub
-      # page fault + GPU mode1 reset this process triggers.
       makeWrapper "$appDir/DeepSeek Harness" "$out/bin/dsh-desktop" \
         "''${gappsWrapperArgs[@]}" \
         --prefix LD_LIBRARY_PATH : ${
@@ -171,10 +116,7 @@ stdenvNoCC.mkDerivation (
           ]
         } \
         ${runtimePathArgs}\
-        ${browserSkillArgs}\
         --set CHROME_DEVEL_SANDBOX "${electron.unwrapped}/libexec/electron/chrome-sandbox" \
-        --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
-        --add-flags "--use-angle=vulkan" \
         --inherit-argv0
 
       for size in 16 22 24 32 48 64 128 256 512; do
@@ -198,8 +140,6 @@ stdenvNoCC.mkDerivation (
 
       makeWrapper "$appBundle/Contents/MacOS/DeepSeek Harness" "$out/bin/dsh-desktop" \
         ${runtimePathArgs}\
-        ${browserSkillArgs}\
-        --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --inherit-argv0
     ''
     + ''
@@ -220,13 +160,9 @@ stdenvNoCC.mkDerivation (
 
     passthru = {
       variant = "unofficial";
-      inherit agentsAnywhereUv browserSkill;
       shell = callPackage ./shell.nix { };
       runtime = callPackage ./runtime.nix { inherit dshHost; };
-      runtimeDeps =
-        lib.optional useSystemdShim systemdRunShim
-        ++ dshHost.passthru.runtimeDeps
-        ++ lib.optional (browserSkill != null) browserSkill;
+      runtimeDeps = lib.optional useSystemdShim systemdRunShim ++ dshHost.passthru.runtimeDeps;
 
       updateScript = writeShellScript "dsh-desktop-update" ''
         PATH=${

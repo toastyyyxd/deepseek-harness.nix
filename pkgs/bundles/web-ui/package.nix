@@ -10,7 +10,7 @@
 }:
 buildDshBundle.fromPnpmWorkspace (finalAttrs: {
   pname = "dsh-web-ui";
-  version = "0.4.5";
+  version = "0.4.6";
   deployPackage = "@linxin666/dsh-web-all";
   stripPrepareScripts = true;
   disableChildBundlePatches = true;
@@ -20,7 +20,7 @@ buildDshBundle.fromPnpmWorkspace (finalAttrs: {
     owner = "zhu1090093659";
     repo = "dsh-web-ui";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-nP0ZvM7LHj2sg3KKnAvSbKCvr7MCuXywD5HgFY+nRBo=";
+    hash = "sha256-myyz1SLQG9nRh3heOe9KOQmMC4tv9RybmxWZtZpzfGc=";
   };
 
   postPatch = ''
@@ -55,7 +55,6 @@ buildDshBundle.fromPnpmWorkspace (finalAttrs: {
   '';
 
   postNormalizeDeploy = ''
-    # Prune
     find "$out/lib/node_modules" -type f -path '*/build/*' ! -name '*.node' -delete
     find "$out/lib/node_modules" -depth -type d -empty -delete
   '';

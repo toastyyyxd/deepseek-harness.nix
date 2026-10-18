@@ -11,20 +11,20 @@
 }:
 buildDshBundle (finalAttrs: {
   pname = "dsh-tui";
-  version = "0.13.0";
+  version = "0.15.0";
 
   src = fetchFromGitHub {
     owner = "ccch1mneyyy";
     repo = "dsh-TUI";
     rev = "refs/tags/v${finalAttrs.version}";
     fetchSubmodules = true;
-    hash = "sha256-gLrSt+rxWUANuGQFGUAR2VLvXbiHdkjwf9RGU4qqPBo=";
+    hash = "sha256-8l+UeIiZ+/e/WO+Iz939ggziaO20yxT6hcyGERVWdfc=";
   };
 
-  # The side-question probe still needs its render-settle patch.
   patches = [
     ./btw-side-question-settle.patch
     ./verify-source-files.patch
+    ./verify-host-contract-node-shebang.patch
   ];
 
   postPatch = ''
@@ -53,7 +53,7 @@ buildDshBundle (finalAttrs: {
         --frozen-lockfile \
         --registry="$NIX_NPM_REGISTRY"
     '';
-    hash = "sha256-wb6r6Lh7dLRZNWD5w/B/azRqV4mlr9QrgEbftx1nwr4=";
+    hash = "sha256-foA//FM9tpcVTD/ZkQlbqx+9QZRvW6tRfJd3hPacnKs=";
   };
 
   nativeBuildInputs = [ pnpm_11 ];
@@ -79,8 +79,7 @@ buildDshBundle (finalAttrs: {
     mkdir -p "$appDir"
 
     cp -r package.json cordis.patch.yml cordis.yml tui-profile presets lib bin assets guide "$appDir/"
-    # Bundle-private deps such as auto-bind and dsh-working-activity are not in
-    # the kernel; linkKernelNodeModules merges the kernel peers into this tree.
+    # Retain private dependencies absent from the kernel.
     cp -r node_modules "$appDir/node_modules"
 
     # Workspace links point into vendor/dsh-std, which is not installed.
