@@ -2,6 +2,8 @@
   lib,
   stdenv,
   fetchFromGitHub,
+  fontconfig,
+  patch,
   yarn-berry_4,
   nodejs_22,
   electron_43,
@@ -68,6 +70,7 @@ stdenv.mkDerivation (finalAttrs: {
     yarn-berry_4.yarnBerryConfigHook
     nodejs_22
     jq
+    patch
   ];
 
   env = {
@@ -173,6 +176,39 @@ stdenv.mkDerivation (finalAttrs: {
     done
     YARN_ENABLE_SCRIPTS=0 YARN_ENABLE_IMMUTABLE_INSTALLS=0 \
       yarn install --mode=skip-build
+
+    # Teach the shell's bundled LibreOffice kit to discover fonts through
+    # fontconfig. The kit (0.1.1 here) only looks under `$XDG_DATA_DIRS/fonts`,
+    # `~/.fonts` and `~/.local/share/fonts`, none of which holds NixOS's store
+    # fonts, so every Office conversion, recalculation and render failed with
+    #
+    #   {"code":"unavailable","error":"No usable fonts were found. ..."}
+    #
+    # The harness workspace already carries the same fix for the kit version it
+    # ships (0.1.5); this applies the equivalent patch to the shell's copy. See
+    # the patch header for why it is a separate file rather than the upstream
+    # one. The placeholder the patch inserts is replaced with fc-list's store
+    # path, so the kit consults the system font configuration at runtime.
+    kitDirs=$(
+      {
+        find node_modules -type d -path '*/@deepseek-ai/libreoffice-kit' 2>/dev/null || true
+        find dsh-plugin-desktop/node_modules -type d -path '*/@deepseek-ai/libreoffice-kit' 2>/dev/null || true
+      } | sort -u
+    )
+    [ -n "$kitDirs" ] || {
+      echo "dsh-desktop-shell: bundled @deepseek-ai/libreoffice-kit not found" >&2
+      exit 1
+    }
+    for kit in $kitDirs; do
+      if grep -q 'fc-list' "$kit/lib/cli.js"; then
+        echo "dsh-desktop-shell: $kit already discovers fonts; skipping patch"
+        continue
+      fi
+      chmod -R u+w "$kit"
+      patch -p1 -d "$kit" < ${./libreoffice-kit-fontconfig-0.1.1.patch}
+      substituteInPlace "$kit/lib/index.js" "$kit/lib/cli.js" \
+        --replace-fail '@fc-list@' '${lib.getExe' fontconfig "fc-list"}'
+    done
 
     runHook postBuild
   '';
