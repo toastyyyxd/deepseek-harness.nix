@@ -124,6 +124,24 @@ stdenv.mkDerivation (finalAttrs: {
         "serviceName: 'DSH Host', stdio: 'pipe', cwd: process.cwd(), env: { ...process.env }," \
         "serviceName: 'DSH Host', stdio: 'pipe', cwd: process.cwd(), env: { ...process.env }, execArgv: ['--expose-internals'],"
 
+    # The 2.0.18-next shell grew an Office composition whose primary runtime --
+    # a bundled Node/Python/pnpm payload under `resources/runtime/<arch>` -- an
+    # installed app must carry: `desktopPrimaryRuntime` marks it `required` when
+    # packaged, and a missing payload aborts Host startup with
+    #
+    #   dsh-plugin-desktop: the bundled primary runtime is missing: ...
+    #
+    # The Nix packaging does not build that payload for the unofficial app yet.
+    # (Upstream's official package assembles one by hand; the unofficial one,
+    # built from the standalone shell repo, predates the requirement.) Mark it
+    # optional, which is how this branch behaved on the 2.0.17 shell: the Host
+    # logs "Office skills are unavailable" and starts, and a caller-supplied
+    # `DSH_DESKTOP_PRIMARY_RUNTIME_DIR` would still be picked up.
+    substituteInPlace dsh-plugin-desktop/src/desktop-office.ts \
+      --replace-fail \
+        "return { source, required: location.packaged }" \
+        "return { source, required: false }"
+
     # The root build resolves dshmarket@latest from npm, outside the lockfile.
     yarn workspace dsh-community-market build
     yarn workspace dsh-plugin-desktop build
