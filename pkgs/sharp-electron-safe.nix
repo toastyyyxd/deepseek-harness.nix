@@ -14,12 +14,12 @@
 # RUNPATH is `$ORIGIN`. This derivation makes it a drop-in for a `node_modules/sharp`
 # directory.
 #
-# The manifest is relabelled to plain `sharp@0.35.3` and the shim's runtime and type
+# The manifest is relabelled to plain `sharp@0.35.5` and the shim's runtime and type
 # entry points are pointed at the bundled `linux-x64/sharp` tree, so the package is
 # self-contained: its published `sharp-upstream` fallback dependency is not vendored
 # here, and consumers type-check with `import type { Sharp } from 'sharp'`.
 #
-# Kept in step with the `sharp@0.35.3` entry in `pkgs/dsh-workspace/package.nix`,
+# Kept in step with the `sharp@0.35.5` entry in `pkgs/dsh-workspace/package.nix`,
 # which solves the same problem for the vendored pnpm tree by substituting the
 # published tarball. That override covers `resources/host`; this one covers every
 # copy in the assembled app tree, which is where the Host actually resolves `sharp`
@@ -37,7 +37,7 @@ runCommand "sharp-electron-safe"
     tar -xzf "$src" -C "$out"
 
     jq '.name = "sharp"
-      | .version = "0.35.3"
+      | .version = "0.35.5"
       | del(.dependencies."sharp-upstream")' \
       "$out/package/package.json" > "$out/package/package.json.tmp"
     mv "$out/package/package.json.tmp" "$out/package/package.json"
