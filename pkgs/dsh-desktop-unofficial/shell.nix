@@ -125,22 +125,39 @@ stdenv.mkDerivation (finalAttrs: {
         "serviceName: 'DSH Host', stdio: 'pipe', cwd: process.cwd(), env: { ...process.env }, execArgv: ['--expose-internals'],"
 
     # The 2.0.18-next shell grew an Office composition whose primary runtime --
-    # a bundled Node/Python/pnpm payload under `resources/runtime/<arch>` -- an
-    # installed app must carry: `desktopPrimaryRuntime` marks it `required` when
-    # packaged, and a missing payload aborts Host startup with
-    #
-    #   dsh-plugin-desktop: the bundled primary runtime is missing: ...
-    #
-    # The Nix packaging does not build that payload for the unofficial app yet.
-    # (Upstream's official package assembles one by hand; the unofficial one,
-    # built from the standalone shell repo, predates the requirement.) Mark it
-    # optional, which is how this branch behaved on the 2.0.17 shell: the Host
-    # logs "Office skills are unavailable" and starts, and a caller-supplied
-    # `DSH_DESKTOP_PRIMARY_RUNTIME_DIR` would still be picked up.
+    # a bundled Node/Python/pnpm payload under `resources/runtime/<arch>` -- a
+    # packaged app normally carries beside itself. The Nix packaging supplies
+    # one through `DSH_DESKTOP_PRIMARY_RUNTIME_DIR` instead (the desktop
+    # package's `primaryRuntime` argument), but a shell built without it must
+    # still start: `desktopPrimaryRuntime` marks the payload `required` for a
+    # packaged app, and the Host aborts when it is missing. Mark it optional, as
+    # on the 2.0.17 shell, so that build only warns that Office skills are
+    # unavailable.
     substituteInPlace dsh-plugin-desktop/src/desktop-office.ts \
       --replace-fail \
         "return { source, required: location.packaged }" \
         "return { source, required: false }"
+
+    # Use the payload where it lies when it is a read-only carrier.
+    #
+    # `load_workspace_dependencies` normally copies the payload under
+    # `$DSH_HOME/dsh-runtimes` on the first tool call. A copy of a Nix store
+    # payload inherits the store's read-only directory modes, so the tool then
+    # fails to remove its staging tree -- the first Office tool call dies with
+    # EACCES. The tool has a read-only-carrier mode for exactly this case (its
+    # optional `root`), in which it validates and returns paths into the payload
+    # itself, so drop the installation root. This keeps the store payload out of
+    # the home directory entirely and makes payload updates follow the store path.
+    substituteInPlace dsh-plugin-desktop/src/desktop-office.ts \
+      --replace-fail \
+        "  readonly root: string" \
+        "  readonly root?: string" \
+      --replace-fail \
+        "export function resolveDesktopOfficeConfig(runtime: DesktopPrimaryRuntime | undefined, home: string): Config | undefined {" \
+        "export function resolveDesktopOfficeConfig(runtime: DesktopPrimaryRuntime | undefined, _home: string): Config | undefined {" \
+      --replace-fail \
+        "return { source: runtime.source, root: join(home, 'dsh-runtimes', PRIMARY_RUNTIME_INSTALL_NAME) }" \
+        "return { source: runtime.source }"
 
     # The root build resolves dshmarket@latest from npm, outside the lockfile.
     yarn workspace dsh-community-market build

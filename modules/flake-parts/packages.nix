@@ -21,6 +21,11 @@
         # `dsh-desktop.override { browserSkill = dsh.bsk; }`.
         # `callPackage`d derivations are overridable, so `bsk.override` works too.
         inherit (dsh) bsk;
+        # Desktop Office primary runtime. Pass it to a desktop package's
+        # `primaryRuntime` argument to give the Office skills a bundled Python,
+        # Node.js and pnpm payload, e.g.
+        # `dsh-desktop.override { primaryRuntime = dsh.dsh-primary-runtime; }`.
+        inherit (dsh) dsh-primary-runtime;
         inherit docs-site;
       };
 

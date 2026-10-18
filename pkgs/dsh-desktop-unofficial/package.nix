@@ -34,6 +34,12 @@
   # configuration, and its self-update check is disabled because the store path
   # is immutable.
   browserSkill ? null,
+  # Bundled Office primary runtime (`dsh-primary-runtime`), from
+  # `pkgs.dsh.dsh-primary-runtime`. When set, the shell is pointed at it with
+  # `DSH_DESKTOP_PRIMARY_RUNTIME_DIR`, which the Host mounts as the Office
+  # skills' Python/Node.js/pnpm payload. When null the shell falls back to the
+  # "Office skills are unavailable" warning the branch patches in.
+  primaryRuntime ? null,
 }:
 
 let
@@ -78,6 +84,17 @@ stdenvNoCC.mkDerivation (
     browserSkillArgs = lib.optionalString (
       finalAttrs.passthru.browserSkill != null
     ) "--set BSK_AUTO_UPDATE off ";
+
+    # The shell's Office composition wants its payload and the skill assets it
+    # was built against in one directory: `primary-runtime` and `office-skills`.
+    # Take the assets from the shell's own bundled harness tree -- the host's
+    # `dsh-skill-office` can be a different harness version, and its asset
+    # layout is versioned -- and assemble both under the app's resources.
+    primaryRuntimeDirArgs =
+      if isDarwin then
+        ''"$appBundle/Contents/Resources/runtime/primary-runtime"''
+      else
+        ''"$appDir/resources/runtime/primary-runtime"'';
   in
   {
     pname = "dsh-desktop";
@@ -126,6 +143,20 @@ stdenvNoCC.mkDerivation (
         dest = "$appDir/resources/host";
       }}
 
+      ${lib.optionalString (finalAttrs.passthru.primaryRuntime != null) ''
+        officeAssets=$(find "$appDir/resources/app" -type d \
+          -path '*/node_modules/@deepseek-ai/dsh-skill-office/assets' | head -n 1)
+        runtimeDir="$appDir/resources/runtime"
+        mkdir -p "$runtimeDir"
+        ln -s ${finalAttrs.passthru.primaryRuntime}/runtime/primary-runtime \
+          "$runtimeDir/primary-runtime"
+        ${copyTree.followLinks {
+          src = "$officeAssets";
+          dest = "$runtimeDir/office-skills";
+          label = "dsh-desktop: Office skill assets are missing";
+        }}
+      ''}
+
       # Replace every `sharp` in the assembled trees with the electron-safe build.
       #
       # The Host resolves `sharp` from the *app* tree, not from `resources/host`:
@@ -166,7 +197,9 @@ stdenvNoCC.mkDerivation (
         } \
         ${runtimePathArgs}\
         ${browserSkillArgs}\
-        --set CHROME_DEVEL_SANDBOX "${electron.unwrapped}/libexec/electron/chrome-sandbox" \
+        ${lib.optionalString (finalAttrs.passthru.primaryRuntime != null) ''
+          --set DSH_DESKTOP_PRIMARY_RUNTIME_DIR ${primaryRuntimeDirArgs} \
+        ''}--set CHROME_DEVEL_SANDBOX "${electron.unwrapped}/libexec/electron/chrome-sandbox" \
         --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --add-flags "--use-angle=vulkan" \
         --inherit-argv0
@@ -190,10 +223,26 @@ stdenvNoCC.mkDerivation (
         dest = "$appBundle/Contents/Resources/host";
       }}
 
+      ${lib.optionalString (finalAttrs.passthru.primaryRuntime != null) ''
+        officeAssets=$(find "$appBundle/Contents/Resources/app" -type d \
+          -path '*/node_modules/@deepseek-ai/dsh-skill-office/assets' | head -n 1)
+        runtimeDir="$appBundle/Contents/Resources/runtime"
+        mkdir -p "$runtimeDir"
+        ln -s ${finalAttrs.passthru.primaryRuntime}/runtime/primary-runtime \
+          "$runtimeDir/primary-runtime"
+        ${copyTree.followLinks {
+          src = "$officeAssets";
+          dest = "$runtimeDir/office-skills";
+          label = "dsh-desktop: Office skill assets are missing";
+        }}
+      ''}
+
       makeWrapper "$appBundle/Contents/MacOS/DeepSeek Harness" "$out/bin/dsh-desktop" \
         ${runtimePathArgs}\
         ${browserSkillArgs}\
-        --set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
+        ${lib.optionalString (finalAttrs.passthru.primaryRuntime != null) ''
+          --set DSH_DESKTOP_PRIMARY_RUNTIME_DIR ${primaryRuntimeDirArgs} \
+        ''}--set UV_PATH "${agentsAnywhereUv}/bin/agents-anywhere-uv" \
         --inherit-argv0
     ''
     + ''
@@ -214,7 +263,7 @@ stdenvNoCC.mkDerivation (
 
     passthru = {
       variant = "unofficial";
-      inherit agentsAnywhereUv browserSkill;
+      inherit agentsAnywhereUv browserSkill primaryRuntime;
       shell = callPackage ./shell.nix { };
       runtime = callPackage ./runtime.nix { inherit dshHost; };
       runtimeDeps =
