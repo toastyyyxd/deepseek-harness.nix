@@ -26,7 +26,12 @@ stdenv.mkDerivation (finalAttrs: {
     hash = "sha256-O194qqZ6dujyy1d1QTUdcpOQsdpROOKaWKKDf7gKOrI=";
   };
 
-  postPatch = lib.optionalString isLinux ''
+  postPatch = ''
+    sed -i 's/^  version: 10$/  version: 9/' yarn.lock
+    # Hide menu bar by default on Linux (show with Alt key)
+    sed -i "/^    icon,$/a\\    autoHideMenuBar: platform === 'linux'," dsh-plugin-desktop/src/window-options.ts
+  ''
+  + lib.optionalString isLinux ''
     # `current` is sufficient on native Linux; Darwin keeps both for universal builds.
     sed -i -E '/^    - (x64|arm64)$/d' .yarnrc.yml
   '';
